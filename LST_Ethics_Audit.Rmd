@@ -1,0 +1,181 @@
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+# init
+## libs
+library(knitr)
+library(RODBC)
+library(tidyverse)
+library(reshape2)
+
+## sql
+con <- RODBC::odbcDriverConnect(connection = '
+  driver={SQL Server}; server=vhacdwdwhsql33.vha.med.va.gov; database=LSV; trusted_connection=true
+')
+query_tiudocument <- paste("
+SELECT DISTINCT
+  CAST(DATEADD(dd, -(DATEPART(dw, TIUDocument.EntryDateTime) - 1), TIUDocument.EntryDateTime) AS date) as start_date,
+  DATEPART(week, TIUDocument.EntryDateTime) AS week,
+  COUNT(DISTINCT(SPatient.PatientSID)) AS tiudocument_count
+FROM
+  LSV.BISL_R1VX.AR3Y_SPatient_SPatient AS SPatient
+  INNER JOIN LSV.BISL_R1VX.AR3Y_TIU_TIUDocument AS TIUDocument
+  ON SPatient.Sta3n = TIUDocument.Sta3n
+  AND SPatient.PatientSID = TIUDocument.PatientSID
+WHERE
+  SPatient.sta3n = '612'
+  AND TIUDocument.Sta3n = '612'
+  AND SPatient.PatientName NOT LIKE 'zz%'
+  AND TIUDocument.EntryDateTime > (GETDATE() - 70)
+  AND TIUDocument.TIUDocumentDefinitionSID IN
+  ('800120087',
+  '800124335',
+  '800127052',
+  '800127102',
+  '800055914')
+GROUP BY
+  CAST(DATEADD(dd, -(DATEPART(dw, TIUDocument.EntryDateTime) - 1), TIUDocument.EntryDateTime) AS date),
+  DATEPART(week, TIUDocument.EntryDateTime)
+ORDER BY
+  CAST(DATEADD(dd, -(DATEPART(dw, TIUDocument.EntryDateTime) - 1), TIUDocument.EntryDateTime) AS date),
+  DATEPART(week, TIUDocument.EntryDateTime)
+")
+query_ordered_item <- paste("
+SELECT DISTINCT
+  CAST(DATEADD(dd, -(DATEPART(dw, OrderedItem.EnteredDateTime) - 1), OrderedItem.EnteredDateTime) AS date) as start_date,
+  DATEPART(week, OrderedItem.EnteredDateTime) AS week,
+  COUNT(DISTINCT(SPatient.PatientSID)) AS ordereditem_count
+FROM
+  LSV.BISL_R1VX.AR3Y_SPatient_SPatient AS SPatient
+  INNER JOIN LSV.BISL_R1VX.AR3Y_CPRSOrder_OrderedItem AS OrderedItem
+  ON SPatient.Sta3n = OrderedItem.Sta3n
+  AND SPatient.PatientSID = OrderedItem.PatientSID
+WHERE
+  SPatient.sta3n = '612'
+  AND OrderedItem.Sta3n = '612'
+  AND SPatient.PatientName NOT LIKE 'zz%'
+  AND OrderedItem.EnteredDateTime > (GETDATE() - 70)
+  AND OrderedItem.OrderableItemSID IN
+  ('800426248',
+  '800426241',
+  '800426246',
+  '800426239',
+  '800426249',
+  '800426242',
+  '800426244',
+  '800426238',
+  '800426247',
+  '800426237',
+  '800426243',
+  '800426245',
+  '800426236',
+  '800426240')
+GROUP BY
+  CAST(DATEADD(dd, -(DATEPART(dw, OrderedItem.EnteredDateTime) - 1), OrderedItem.EnteredDateTime) AS date),
+  DATEPART(week, OrderedItem.EnteredDateTime)
+ORDER BY
+  CAST(DATEADD(dd, -(DATEPART(dw, OrderedItem.EnteredDateTime) - 1), OrderedItem.EnteredDateTime) AS date),
+  DATEPART(week, OrderedItem.EnteredDateTime)
+")
+query_order_wo_note <- paste("
+;with x as 
+(SELECT DISTINCT -- patient with order only
+  spatient.patientssn,
+  spatient.patientname, 
+  OrderedItem.EnteredDateTime as OrderDateTime
+FROM
+  LSV.BISL_R1VX.AR3Y_SPatient_SPatient as Spatient
+  LEFT JOIN LSV.BISL_R1VX.AR3Y_CPRSOrder_OrderedItem AS OrderedItem
+    ON SPatient.Sta3n = OrderedItem.Sta3n
+    AND SPatient.PatientSID = OrderedItem.PatientSID
+WHERE
+  SPatient.sta3n = '612'
+  AND SPatient.PatientName NOT LIKE 'zz%'
+  AND OrderedItem.EnteredDateTime > (GETDATE() - 70)
+  AND OrderedItem.OrderableItemSID IN
+  ('800426248',
+  '800426241',
+  '800426246',
+  '800426239',
+  '800426249',
+  '800426242',
+  '800426244',
+  '800426238',
+  '800426247',
+  '800426237',
+  '800426243',
+  '800426245',
+  '800426236',
+  '800426240')
+), 
+
+y as 
+(SELECT DISTINCT -- patients with tiu
+  spatient.patientssn AS patientssn,
+  TIUDocument.EntryDateTime AS TIUDateTime,
+  TIUDocument.TIUDocumentDefinitionSID
+FROM
+  LSV.BISL_R1VX.AR3Y_SPatient_SPatient AS Spatient
+  LEFT JOIN LSV.BISL_R1VX.AR3Y_TIU_TIUDocument AS TIUDocument
+    ON SPatient.Sta3n = TIUDocument.Sta3n
+    AND SPatient.PatientSID = TIUDocument.PatientSID
+WHERE
+  SPatient.sta3n = '612'
+  AND SPatient.PatientName NOT LIKE 'zz%'
+  AND TIUDocument.EntryDateTime > (GETDATE() - 70)
+  AND TIUDocument.TIUDocumentDefinitionSID IN
+  ('800120087',
+  '800124335',
+  '800127052',
+  '800127102',
+  '800055914')
+)
+
+select
+  x.patientssn as Patient_SSN,
+  x.patientname as Patient_Name,
+  CAST(x.OrderDateTime as date) as Order_Date
+from
+ x
+ left join y
+   on x.patientssn = y.patientssn
+where
+  y.TIUDateTime IS NULL
+order by
+  x.patientssn,
+  x.OrderDateTime
+")
+
+## data
+tiudocument_count <- sqlQuery(con, query_tiudocument)
+ordered_item_count <- sqlQuery(con, query_ordered_item)
+order_wo_note <- sqlQuery(con, query_order_wo_note)
+### join datasets, and remove week (which was just for the aggregate counts)
+my_data <- inner_join(ordered_item_count, tiudocument_count) %>%
+  select(-week)
+odbcCloseAll()
+rm(channel, con, query, query_ordered_item, query_order_wo_note, query_tiudocument, ordered_item_count, tiudocument_count)
+
+## funcs
+pipeMelt <- function(df){
+  function(vars){
+    return(melt(df, id.vars = vars))
+  }
+}
+
+getBarGraph <- function(start_date){
+  var <- pipeMelt(filter(my_data, start_date == start_date))('start_date') %>%
+  filter(variable != 'start_date') %>%
+  ggplot(aes(x = start_date, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "LST Order v. TIU Doc counts by week for NorCal", x = "Start date of week", y = "LST Order/TIU Doc count", fill = "Item") +
+  scale_fill_discrete(labels = c("LST Order", "TIU Doc")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(breaks = seq(0, max(my_data$tiudocument_count), 10))
+  return(var)
+}
+
+## plotz
+getBarGraph()
+
+kable(order_wo_note, caption = "Patients with LST order, but without LST TIU document:")
+```
+
